@@ -22,20 +22,14 @@ function init() {
   game.board = board;
 }
 
-function step(ts) {
-  update(ts);
-  render(ts);
+function step() {
+  render();
   requestAnimationFrame(step);
 }
 
 function start() {
   game.stop = false;
   step();
-}
-
-function update() {
-  const { board } = game;
-  // TODO: update board based on user input
 }
 
 function render() {
@@ -60,7 +54,8 @@ class Board {
     this._chart = Array.apply(null, Array(numUnits)).map(x => (
       Array.apply(null, Array(numUnits)).map(x => null)));
     this._selected = null;
-    this._animating = false;
+    this._movingPiece = null;
+    this._movingDurationPerUnit = 200;
   }
 
   nextRound() {
@@ -95,35 +90,79 @@ class Board {
     return slots;
   }
 
-  toggleSelect({x, y}) {
+  handleClick(pos) {
+    const { x, y } = pos;
     const numUnits = this._chart.length;
     if (x >= 0 && x < numUnits &&
-        y >= 0 && y < numUnits &&
-        this._chart[x][y] !== null) {
-      if (this._selected &&
-          this._selected.x === x &&
-          this._selected.y === y) {
-        this._selected = null;
+        y >= 0 && y < numUnits) {
+      if (this._chart[x][y] === null) {
+        this.movePieceTo(pos);
       } else {
-        this._selected = { x, y, timestamp: Date.now() };
+        this.toggleSelect(pos);
       }
     }
   }
 
-  getPathFromSelected(to) {
-    const from = { x: this._selected.x, y: this._selected.y };
+  toggleSelect(pos) {
+    const { x, y } = pos;
+    if (this._selected &&
+        this._selected.x === x &&
+        this._selected.y === y) {
+      this._selected = null;
+    } else {
+      this._selected = { x, y, timestamp: Date.now() };
+    }
+  }
+
+  movePieceTo(pos) {
+    const { x, y } = pos;
+    if (this._selected &&
+        (this._selected.x !== x || this._selected.y !== y)) {
+      const from = { x: this._selected.x, y: this._selected.y };
+      const to = pos;
+      const path = this.getShortestPath(from, to);
+      if (path !== null) {
+        // Path is a list of positions starts with `from`, end with `to`
+        // Romove selected piece from board
+        // Create a movingPiece object to kick off the animation.
+        // When animation is done:
+        //   - Remove movingPiece object
+        //   - Put piece at `to`
+        const piece = this._chart[from.x][from.y];
+        this._chart[from.x][from.y] = null;
+        const duration = this._movingDurationPerUnit * (path.length - 1);
+        this._movingPiece = {
+          startTimestamp: Date.now(),
+          piece,
+          path
+        };
+        const done = () => {
+          this._movingPiece = null;
+          this._chart[to.x][to.y] = piece;
+        };
+        window.setTimeout(done, duration);
+      } else {
+        alert('Can not move to there');
+      }
+    }
+  }
+
+  getShortestPath(from, to) {
     // TODO: BFS search path from => to
     let path = [];
-    return path;
+    return null;
   }
 
   draw(ctx) {
     const { width } = ctx.canvas;
     const numUnits = this._chart.length;
     const unitWidth = width / numUnits;
+    const now = Date.now();
 
     // draw grid
     ctx.save();
+    ctx.beginPath();
+    ctx.strokeStyle = 'white';
     for (let i = 0; i <= numUnits; ++i) {
       // horizontal
       const sofar = i * unitWidth;
@@ -134,7 +173,6 @@ class Board {
       ctx.moveTo(sofar, 0);
       ctx.lineTo(sofar, width);
     }
-    ctx.strokeStyle = 'white';
     ctx.stroke();
     ctx.restore();
 
@@ -155,13 +193,12 @@ class Board {
         let y = (j + 0.5) * unitWidth;
         if (this._selected && i === this._selected.x && j === this._selected.y) {
           const { timestamp } = this._selected;
-          const t = Date.now() - timestamp;
+          const t = now - timestamp;
           y += bounce * unitWidth * Math.sin(w * t);
         }
 
         const { color } = piece;
         ctx.save();
-        ctx.strokeStyle = '';
         ctx.fillStyle = color;
         ctx.beginPath();
         ctx.arc(x, y, radius, 0, 2 * Math.PI);
@@ -169,6 +206,8 @@ class Board {
         ctx.restore();
       }
     }
+
+    // draw moving piece
   }
 }
 
@@ -179,7 +218,7 @@ function handleClick(e) {
   const spacing = width / numUnits;
   x = Math.round(x / spacing - 0.5);
   y = Math.round(y / spacing - 0.5);
-  board.toggleSelect({ x, y });
+  board.handleClick({ x, y });
 }
 
 // random int in { 0, 1, ..., n-1 }
