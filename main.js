@@ -1,6 +1,6 @@
 var game = {
-  numUnits: 10,
-  numNewPiecesPerMove: 10,
+  numUnits: 5,
+  numNewPiecesPerMove: 5,
 
   ctx: null,
   board: null
@@ -121,6 +121,7 @@ class Board {
       const from = { x: this._selected.x, y: this._selected.y };
       const to = pos;
       const path = this.getShortestPath(from, to);
+      console.log(path);
       if (path !== null) {
         // Path is a list of positions starts with `from`, end with `to`
         // Romove selected piece from board
@@ -149,7 +150,66 @@ class Board {
 
   getShortestPath(from, to) {
     // TODO: BFS search path from => to
-    let path = [];
+    // https://en.wikipedia.org/wiki/Breadth-first_search
+    const numUnits = this._chart.length;
+
+    const getKey = ({x, y}) => x + '_' + y;
+    let queue = [];
+    let dist = {};
+    let prev = {};
+
+    const root = { x: from.x, y: from.y };
+    dist[getKey(root)] = 0;
+    queue.push(root);
+
+    while (queue.length > 0) {
+      const current = queue.shift();
+      const { x, y } = current;
+
+      let neighbors = [];
+      // Can go left
+      if (x - 1 >= 0 && this._chart[x - 1][y] === null) {
+        neighbors.push({ x: x - 1, y });
+      }
+
+      // Can go right
+      if (x + 1 < numUnits && this._chart[x + 1][y] === null) {
+        neighbors.push({ x: x + 1, y });
+      }
+
+      // Can go up
+      if (y - 1 >= 0 && this._chart[x][y - 1] === null) {
+        neighbors.push({ x, y: y - 1 });
+      }
+
+      // Can go down
+      if (y + 1 < numUnits && this._chart[x][y + 1] === null) {
+        neighbors.push({ x, y: y + 1 });
+      }
+
+      const currentKey = getKey(current);
+      console.log('currentKye', currentKey);
+      for (let i = 0; i < neighbors.length; ++i) {
+        const node = neighbors[i];
+        const key = getKey(node);
+        console.log('dist keky', dist[key]);
+        if (typeof dist[key] === 'undefined') {
+          dist[key] = dist[currentKey] + 1;
+          prev[key] = current;
+          queue.push(node);
+        }
+      }
+    }
+
+    if (typeof dist[getKey(to)] !== 'undefined') {
+      let node = to;
+      let path = [ node ];
+      while ((node = prev[getKey(node)])) path.push(node);
+      console.log(dist);
+      console.log(prev);
+      return path.reverse();
+    }
+
     return null;
   }
 
