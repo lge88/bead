@@ -55,7 +55,7 @@ class Board {
       Array.apply(null, Array(numUnits)).map(x => null)));
     this._selected = null;
     this._movingPiece = null;
-    this._movingDurationPerUnit = 200;
+    this._movingDurationPerUnit = 50;
   }
 
   nextRound() {
@@ -131,6 +131,7 @@ class Board {
         //   - Put piece at `to`
         const piece = this._chart[from.x][from.y];
         this._chart[from.x][from.y] = null;
+        this._selected = null;
         const duration = this._movingDurationPerUnit * (path.length - 1);
         this._movingPiece = {
           startTimestamp: Date.now(),
@@ -149,9 +150,10 @@ class Board {
   }
 
   getShortestPath(from, to) {
-    // TODO: BFS search path from => to
+    // BFS search path from => to
     // https://en.wikipedia.org/wiki/Breadth-first_search
-    const numUnits = this._chart.length;
+    const chart = this._chart;
+    const numUnits = chart.length;
 
     const getKey = ({x, y}) => x + '_' + y;
     let queue = [];
@@ -168,58 +170,60 @@ class Board {
 
       let neighbors = [];
       // Can go left
-      if (x - 1 >= 0 && this._chart[x - 1][y] === null) {
+      if (x - 1 >= 0 && chart[x - 1][y] === null) {
         neighbors.push({ x: x - 1, y });
       }
 
       // Can go right
-      if (x + 1 < numUnits && this._chart[x + 1][y] === null) {
+      if (x + 1 < numUnits && chart[x + 1][y] === null) {
         neighbors.push({ x: x + 1, y });
       }
 
       // Can go up
-      if (y - 1 >= 0 && this._chart[x][y - 1] === null) {
+      if (y - 1 >= 0 && chart[x][y - 1] === null) {
         neighbors.push({ x, y: y - 1 });
       }
 
       // Can go down
-      if (y + 1 < numUnits && this._chart[x][y + 1] === null) {
+      if (y + 1 < numUnits && chart[x][y + 1] === null) {
         neighbors.push({ x, y: y + 1 });
       }
 
       const currentKey = getKey(current);
-      console.log('currentKye', currentKey);
       for (let i = 0; i < neighbors.length; ++i) {
         const node = neighbors[i];
         const key = getKey(node);
-        console.log('dist keky', dist[key]);
         if (typeof dist[key] === 'undefined') {
           dist[key] = dist[currentKey] + 1;
           prev[key] = current;
           queue.push(node);
+
+          if (node.x === to.x && node.y === to.y) {
+            let it = to;
+            let path = [ it ];
+            while ((it = prev[getKey(it)])) path.push(it);
+            return path.reverse();
+          }
         }
       }
-    }
-
-    if (typeof dist[getKey(to)] !== 'undefined') {
-      let node = to;
-      let path = [ node ];
-      while ((node = prev[getKey(node)])) path.push(node);
-      console.log(dist);
-      console.log(prev);
-      return path.reverse();
     }
 
     return null;
   }
 
   draw(ctx) {
+    this.drawGrid(ctx);
+    this.drawStaticPieces(ctx);
+    if (this._movingPiece !== null) {
+      this.drawMovingPiece(ctx);
+    }
+  }
+
+  drawGrid(ctx) {
     const { width } = ctx.canvas;
     const numUnits = this._chart.length;
     const unitWidth = width / numUnits;
-    const now = Date.now();
 
-    // draw grid
     ctx.save();
     ctx.beginPath();
     ctx.strokeStyle = 'white';
@@ -235,13 +239,23 @@ class Board {
     }
     ctx.stroke();
     ctx.restore();
+  }
 
-    // draw pieces
+  drawStaticPieces(ctx) {
     const shrink = 0.75;
     const bounce = 0.06;
-    const T = 500;
-    const w = 2 * Math.PI / T;
+    const period = 500;
+
+    const { width } = ctx.canvas;
+    const numUnits = this._chart.length;
+    const unitWidth = width / numUnits;
+    const now = Date.now();
+
+    // Bouncing amplitude
+    const A = bounce * unitWidth;
+    const w = 2 * Math.PI / period;
     const radius = 0.5 * unitWidth * shrink;
+
     for (let i = 0; i < numUnits; ++i) {
       for (let j = 0; j < numUnits; ++j) {
         const piece = this._chart[i][j];
@@ -249,12 +263,12 @@ class Board {
 
         const x = (i + 0.5) * unitWidth;
 
-        // bounce up and down if selected.
+        // For selected piece, bounce up and down.
         let y = (j + 0.5) * unitWidth;
         if (this._selected && i === this._selected.x && j === this._selected.y) {
           const { timestamp } = this._selected;
           const t = now - timestamp;
-          y += bounce * unitWidth * Math.sin(w * t);
+          y += A * Math.sin(w * t);
         }
 
         const { color } = piece;
@@ -266,8 +280,37 @@ class Board {
         ctx.restore();
       }
     }
+  }
 
-    // draw moving piece
+  drawMovingPiece(ctx) {
+    const { width } = ctx.canvas;
+    const numUnits = this._chart.length;
+    const unitWidth = width / numUnits;
+    const now = Date.now();
+    const { startTimestamp, piece, path } = this._movingPiece;
+    const elapsed = now - startTimestamp;
+
+    // path[i], path[i+1] is the segement the moving piece currently in
+    const i = Math.floor(elapsed / this._movingDurationPerUnit);
+    if (i + 1 >= path.length) return;
+
+    // t is the relative time (in range [0, 1]) inside segment path[i], path[i+1]
+    const t = elapsed / this._movingDurationPerUnit - i;
+    const x1 = (path[i].x + 0.5) * unitWidth, y1 = (path[i].y + 0.5) * unitWidth;
+    const x2 = (path[i + 1].x + 0.5) * unitWidth, y2 = (path[i + 1].y + 0.5) * unitWidth;
+    const x = x1 + t * (x2 - x1);
+    const y = y1 + t * (y2 - y1);
+
+    // Extract this to drawPiece function.
+    const shrink = 0.75;
+    const radius = 0.5 * unitWidth * shrink;
+    const { color } = piece;
+    ctx.save();
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, 2 * Math.PI);
+    ctx.fill();
+    ctx.restore();
   }
 }
 
