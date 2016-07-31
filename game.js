@@ -1,6 +1,6 @@
 var game = {
-  numUnits: 10,
-  numNewPiecesPerMove: 5,
+  numUnits: 5,
+  numNewPiecesPerMove: 3,
 
   ctx: null,
   board: null
@@ -45,9 +45,10 @@ class Board {
   constructor({ numUnits = 10, numNewPiecesPerMove = 3, minLength = 3 }) {
     this._numNewPiecesPerMove = numNewPiecesPerMove;
     this._minLength = minLength;
-    this._movingDurationPerUnit = 50;
-    this._disappearingDuration = 500;
-
+    this._movingDurationPerUnit = 30;
+    this._appearingDuration = 200;
+    this._disappearingDuration = 200;
+    this._timeoutNewRound = 500;
     this._colors = [
       'red',
       'blue',
@@ -60,6 +61,7 @@ class Board {
       Array.apply(null, Array(numUnits)).map(x => null)));
     this._selected = null;
     this._movingPiece = null;
+    this._appearingPieces = null;
     this._disappearingPieces = null;
   }
 
@@ -69,21 +71,38 @@ class Board {
     let availableSlots = this.getAvailableSlots();
 
     shuffle(availableSlots);
-    const picked = availableSlots.slice(0, numNewPiecesPerMove);
-
+    let picked = availableSlots.slice(0, numNewPiecesPerMove);
     for (let i = 0; i < picked.length; ++i) {
-      const { x, y } = picked[i];
-      const color = colors[randomInt(colors.length)];
-      const piece = { color };
-      this._chart[x][y] = piece;
+      picked[i].color = colors[randomInt(colors.length)];
     }
 
     // TODO: Check pieces
+    // picked.forEach((pos) => this.check(pos));
+    this._appearingPieces = {
+      startTimestamp: Date.now(),
+      pieces: picked
+    };
 
-    availableSlots = this.getAvailableSlots();
-    if (availableSlots.length === 0) {
-      alert('Game over');
-    }
+    return wait(this._appearingDuration)
+      .then(() => {
+        this._appearingPieces = null;
+        for (let i = 0; i < picked.length; ++i) {
+          const { x, y, color } = picked[i];
+          const piece = { color };
+          this._chart[x][y] = piece;
+        }
+      })
+      .then(() => {
+        // TODO: check each new piece
+        // this.checkMulti(this._appearingPieces);
+      })
+      .then(() => {
+        availableSlots = this.getAvailableSlots();
+        if (availableSlots.length === 0) {
+          console.log('Game over');
+        }
+        return picked;
+      });
   }
 
   getAvailableSlots() {
@@ -97,7 +116,9 @@ class Board {
 
   handleClick(pos) {
     // Block if animation in progress
-    if (this._movingPiece !== null || this._disappearingPieces !== null) return;
+    if (this._movingPiece ||
+        this._disappearingPieces ||
+        this._appearingPieces) return;
 
     const { x, y } = pos;
     const numUnits = this._chart.length;
@@ -138,24 +159,30 @@ class Board {
         //   - Remove movingPiece object
         //   - Put piece at `to`
         const piece = this._chart[from.x][from.y];
+        const duration = this._movingDurationPerUnit * (path.length - 1);
+        const timeoutNewRound = this._timeoutNewRound;
+
         this._chart[from.x][from.y] = null;
         this._selected = null;
-        const duration = this._movingDurationPerUnit * (path.length - 1);
         this._movingPiece = {
           startTimestamp: Date.now(),
           piece,
           path
         };
-        const done = () => {
-          this._movingPiece = null;
-          this._chart[to.x][to.y] = piece;
-          this.check(to);
-        };
-        window.setTimeout(done, duration);
+
+        return wait(duration)
+          .then(() => {
+            this._movingPiece = null;
+            this._chart[to.x][to.y] = piece;
+            return this.check(to);
+          })
+          .then(() => wait(timeoutNewRound))
+          .then(() => this.nextRound());
       } else {
-        alert('Can not move to there');
+        console.log('Can not move from', from, ' to', to);
       }
     }
+    return Promise.resolve();
   }
 
   // Rules: finds max continious sequence of same color as pos in
@@ -198,23 +225,45 @@ class Board {
     // When animation finished:
     //   - Remove disappearing pieces
     //   - Call nextRound
-    const done = () => {
-      this._disappearingPieces = null;
-      this.nextRound();
-    };
 
-    // console.log('longest path for ', color, longestPath);
-    if (longestPath.length >= this._minLength) {
-      longestPath.forEach(({ x, y }) => chart[x][y] = null);
-      this._disappearingPieces = {
-        startTimestamp: Date.now(),
-        color: color,
-        path: longestPath
+    // const done = () => {
+    //   this._disappearingPieces = null;
+    //   this.nextRound();
+    // };
+
+    const promise = new Promise((resolve, reject) => {
+      const done = () => {
+        this._disappearingPieces = null;
+        resolve();
       };
-      window.setTimeout(done, this._disappearingDuration);
-    } else {
-      done();
-    }
+
+      // console.log('longest path for ', color, longestPath);
+      if (longestPath.length >= this._minLength) {
+        longestPath.forEach(({ x, y }) => chart[x][y] = null);
+        this._disappearingPieces = {
+          startTimestamp: Date.now(),
+          color: color,
+          path: longestPath
+        };
+        window.setTimeout(done, this._disappearingDuration);
+      } else {
+        done();
+      }
+    });
+
+    // // console.log('longest path for ', color, longestPath);
+    // if (longestPath.length >= this._minLength) {
+    //   longestPath.forEach(({ x, y }) => chart[x][y] = null);
+    //   this._disappearingPieces = {
+    //     startTimestamp: Date.now(),
+    //     color: color,
+    //     path: longestPath
+    //   };
+    //   window.setTimeout(done, this._disappearingDuration);
+    // } else {
+    //   done();
+    // }
+    return promise;
   }
 
   getShortestPath(from, to) {
@@ -285,6 +334,9 @@ class Board {
     if (this._movingPiece !== null) {
       this.drawMovingPiece(ctx);
     }
+    if (this._appearingPieces !== null) {
+      this.drawAppearingPieces(ctx);
+    }
     if (this._disappearingPieces !== null) {
       this.drawDisappearingPieces(ctx);
     }
@@ -315,7 +367,7 @@ class Board {
   drawStaticPieces(ctx) {
     const shrink = 0.75;
     const bounce = 0.06;
-    const period = 500;
+    const period = 300;
 
     const { width } = ctx.canvas;
     const numUnits = this._chart.length;
@@ -374,6 +426,27 @@ class Board {
     this.drawPiece(ctx, { x, y, color, radius });
   }
 
+  drawAppearingPieces(ctx) {
+    const shrink = 0.75;
+    const duration = this._appearingDuration;
+    const { pieces, startTimestamp } = this._appearingPieces;
+    const chart = this._chart;
+    const { width } = ctx.canvas;
+    const numUnits = this._chart.length;
+    const unitWidth = width / numUnits;
+    const now = Date.now();
+    const finalRadius = 0.5 * unitWidth * shrink;
+    const t = (now - startTimestamp) / duration;
+
+    for (let i = 0; i < pieces.length; ++i) {
+      const piece = pieces[i];
+      const x = (piece.x + 0.5) * unitWidth;
+      const y = (piece.y + 0.5) * unitWidth;
+      const radius = t * finalRadius;
+      if (radius > 0) this.drawPiece(ctx, { x, y, color: piece.color, radius });
+    }
+  }
+
   drawDisappearingPieces(ctx) {
     const shrink = 0.75;
     const duration = this._disappearingDuration;
@@ -391,7 +464,7 @@ class Board {
       const x = (pos.x + 0.5) * unitWidth;
       const y = (pos.y + 0.5) * unitWidth;
       const radius = (1 - t) * initialRadius;
-      this.drawPiece(ctx, { x, y, color, radius });
+      if (radius > 0) this.drawPiece(ctx, { x, y, color, radius });
     }
   }
 
@@ -428,6 +501,10 @@ function shuffle(a) {
     a[i - 1] = a[j];
     a[j] = x;
   }
+}
+
+function wait(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 init();
