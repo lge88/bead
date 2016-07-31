@@ -6,41 +6,6 @@ var game = {
   board: null
 };
 
-function init() {
-  const { numUnits, numNewPiecesPerMove } = game;
-
-  const canvas = document.querySelector('#canvas');
-  const ctx = canvas.getContext('2d');
-
-  const board = new Board({ numUnits, numNewPiecesPerMove });
-  board.nextRound();
-
-  canvas.addEventListener('click', handleClick);
-
-  game.canvas = canvas;
-  game.ctx = ctx;
-  game.board = board;
-}
-
-function step() {
-  render();
-  requestAnimationFrame(step);
-}
-
-function start() {
-  game.stop = false;
-  step();
-}
-
-function render() {
-  const { board, ctx } = game;
-  const { width, height } = ctx.canvas;
-  ctx.clearRect(0, 0, width, height);
-  ctx.fillStyle = 'grey';
-  ctx.fillRect(0, 0, width, height);
-  board.draw(ctx);
-}
-
 class Board {
   constructor({ numUnits = 10, numNewPiecesPerMove = 3, minLength = 3 }) {
     this._numNewPiecesPerMove = numNewPiecesPerMove;
@@ -76,8 +41,6 @@ class Board {
       picked[i].color = colors[randomInt(colors.length)];
     }
 
-    // TODO: Check pieces
-    // picked.forEach((pos) => this.check(pos));
     this._appearingPieces = {
       startTimestamp: Date.now(),
       pieces: picked
@@ -190,26 +153,56 @@ class Board {
   // connecting sequence has no less than minLength elements, the
   // sequence will be disappeared.
   check(pos) {
-    const { x, y } = pos;
     const chart = this._chart;
-    const numUnits = chart.length;
-    const color = chart[x][y].color;
 
-    // horizontal & vertical
-    let hPath = [], vPath = [];
-    let left = x, right = x, top = y, bottom = y;
-    while (left - 1 >= 0 && chart[left - 1][y] && chart[left - 1][y].color === color) left -= 1;
-    while (right + 1 < numUnits && chart[right + 1][y] && chart[right + 1][y].color === color) right += 1;
-    while (top - 1 >= 0 && chart[x][top - 1] && chart[x][top - 1].color === color) top -= 1;
-    while (bottom + 1 < numUnits && chart[x][bottom + 1] && chart[x][bottom + 1].color === color) bottom += 1;
-    for (let i = left; i <= right; ++i) hPath.push({ x: i, y });
-    for (let i = top; i <= bottom; ++i) vPath.push({ x, y: i });
+    // Given start position, step in x direction dx, step in y direction dy
+    // Return the furthest position that the path is consist of same color.
+    const march = ({ start, chart, dx, dy }) => {
+      const { x, y } = start;
+      const color = chart[x][y].color;
+      const numUnits = chart.length;
+      const newX = x + dx, newY = y + dy;
+      if (newX < 0 || newX >= numUnits ||
+          newY < 0 || newY >= numUnits ||
+          !chart[newX] ||
+          !chart[newX][newY] ||
+          chart[newX][newY].color !== color) {
+        return start;
+      } else {
+        const newStart = { x: newX, y: newY };
+        return march({ start: newStart, chart, dx, dy });
+      }
+    };
 
-    // TODO: diagnal
-    // let leftTopToRightBottomPath = [], leftBottomToRightTopPath = [];
+    // horizontal & vertical bounds
+    let left = march({ start: pos, chart, dx: -1, dy: 0 });
+    let right = march({ start: pos, chart, dx: +1, dy: 0 });
+    let top = march({ start: pos, chart, dx: 0, dy: -1 });
+    let bottom = march({ start: pos, chart, dx: 0, dy: +1 });
 
+    // diagnal bounds
+    let topLeft = march({ start: pos, chart, dx: -1, dy: -1 });
+    let bottomRight = march({ start: pos, chart, dx: +1, dy: +1 });
+    let bottomLeft = march({ start: pos, chart, dx: -1, dy: +1 });
+    let topRight = march({ start: pos, chart, dx: +1, dy: -1 });
 
-    const paths = [ hPath, vPath ];
+    // horizontal path
+    let hPath = [];
+    for (let i = left; i <= right; ++i) hPath.push({ x: i, y: pos.y });
+
+    // vertical path
+    let vPath = [];
+    for (let i = top; i <= bottom; ++i) vPath.push({ x: pos.x, y: i });
+
+    // diagnal path: top left to bottom right path
+    let tl2brPath = [];
+    for (let i = topLeft.x, j = topLeft.y; i <= bottomRight.x; ++i, ++j) tl2brPath.push({ x: i, y: j });
+
+    // diagnal path: bottom left to top right path
+    let bl2trPath = [];
+    for (let i = bottomLeft.x, j = bottomLeft.y; i <= topRight.x; ++i, --j) bl2trPath.push({ x: i, y: j });
+
+    const paths = [ hPath, vPath, tl2brPath, bl2trPath ];
     const longestPath = paths.reduce((sofar, current) => {
       if (current.length > sofar.length) {
         return { path: current, length: current.length };
@@ -222,48 +215,22 @@ class Board {
 
     // Remove all pieces in the longest path from chart
     // Create disappearing pieces
-    // When animation finished:
-    //   - Remove disappearing pieces
-    //   - Call nextRound
+    // When animation finished: remove disappearing pieces
 
-    // const done = () => {
-    //   this._disappearingPieces = null;
-    //   this.nextRound();
-    // };
-
-    const promise = new Promise((resolve, reject) => {
-      const done = () => {
-        this._disappearingPieces = null;
-        resolve();
+    // console.log('longest path for ', color, longestPath);
+    const color = chart[pos.x][pos.y].color;
+    if (longestPath.length >= this._minLength) {
+      longestPath.forEach(({ x, y }) => chart[x][y] = null);
+      this._disappearingPieces = {
+        startTimestamp: Date.now(),
+        color: color,
+        path: longestPath
       };
+      return wait(this._disappearingDuration)
+        .then(() => this._disappearingPieces = null);
+    }
 
-      // console.log('longest path for ', color, longestPath);
-      if (longestPath.length >= this._minLength) {
-        longestPath.forEach(({ x, y }) => chart[x][y] = null);
-        this._disappearingPieces = {
-          startTimestamp: Date.now(),
-          color: color,
-          path: longestPath
-        };
-        window.setTimeout(done, this._disappearingDuration);
-      } else {
-        done();
-      }
-    });
-
-    // // console.log('longest path for ', color, longestPath);
-    // if (longestPath.length >= this._minLength) {
-    //   longestPath.forEach(({ x, y }) => chart[x][y] = null);
-    //   this._disappearingPieces = {
-    //     startTimestamp: Date.now(),
-    //     color: color,
-    //     path: longestPath
-    //   };
-    //   window.setTimeout(done, this._disappearingDuration);
-    // } else {
-    //   done();
-    // }
-    return promise;
+    return Promise.resolve();
   }
 
   getShortestPath(from, to) {
@@ -478,16 +445,7 @@ class Board {
   }
 }
 
-function handleClick(e) {
-  const { canvas, numUnits, board } = game;
-  let { offsetX: x, offsetY: y } = e;
-  const { width } = canvas;
-  const spacing = width / numUnits;
-  x = Math.round(x / spacing - 0.5);
-  y = Math.round(y / spacing - 0.5);
-  board.handleClick({ x, y });
-}
-
+// Helpers
 // random int in { 0, 1, ..., n-1 }
 function randomInt(n) {
   return Math.floor(Math.random() * n);
@@ -505,6 +463,46 @@ function shuffle(a) {
 
 function wait(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function init() {
+  const { numUnits, numNewPiecesPerMove } = game;
+
+  const canvas = document.querySelector('#canvas');
+  const ctx = canvas.getContext('2d');
+
+  const board = new Board({ numUnits, numNewPiecesPerMove });
+  board.nextRound();
+
+  canvas.addEventListener('click', handleClick);
+
+  game.canvas = canvas;
+  game.ctx = ctx;
+  game.board = board;
+}
+
+function step() {
+  render();
+  requestAnimationFrame(step);
+}
+
+function render() {
+  const { board, ctx } = game;
+  const { width, height } = ctx.canvas;
+  ctx.clearRect(0, 0, width, height);
+  ctx.fillStyle = 'grey';
+  ctx.fillRect(0, 0, width, height);
+  board.draw(ctx);
+}
+
+function handleClick(e) {
+  const { canvas, numUnits, board } = game;
+  let { offsetX: x, offsetY: y } = e;
+  const { width } = canvas;
+  const spacing = width / numUnits;
+  x = Math.round(x / spacing - 0.5);
+  y = Math.round(y / spacing - 0.5);
+  board.handleClick({ x, y });
 }
 
 init();
