@@ -1,6 +1,7 @@
 var game = {
-  numUnits: 5,
+  numUnits: 10,
   numNewPiecesPerMove: 3,
+  minLength: 3,
 
   ctx: null,
   board: null
@@ -16,9 +17,9 @@ class Board {
     this._timeoutNewRound = 500;
     this._colors = [
       'red',
-      'blue',
-      'yellow',
       'green',
+      'blue',
+      'orange',
       'purple',
     ];
 
@@ -28,6 +29,8 @@ class Board {
     this._movingPiece = null;
     this._appearingPieces = null;
     this._disappearingPieces = null;
+    this._score = 0;
+    this._over = false;
   }
 
   nextRound() {
@@ -63,6 +66,7 @@ class Board {
         availableSlots = this.getAvailableSlots();
         if (availableSlots.length === 0) {
           console.log('Game over');
+          this._over = true;
         }
         return picked;
       });
@@ -78,21 +82,23 @@ class Board {
   }
 
   handleClick(pos) {
-    // Block if animation in progress
+    // Block if animation in progress or the game is over.
     if (this._movingPiece ||
         this._disappearingPieces ||
-        this._appearingPieces) return;
+        this._appearingPieces ||
+        this._over) return Promise.resolve();
 
     const { x, y } = pos;
     const numUnits = this._chart.length;
     if (x >= 0 && x < numUnits &&
         y >= 0 && y < numUnits) {
       if (this._chart[x][y] === null) {
-        this.movePieceTo(pos);
+        return this.movePieceTo(pos);
       } else {
         this.toggleSelect(pos);
       }
     }
+    return Promise.resolve();
   }
 
   toggleSelect(pos) {
@@ -139,13 +145,30 @@ class Board {
             this._chart[to.x][to.y] = piece;
             return this.check(to);
           })
-          .then(() => wait(timeoutNewRound))
-          .then(() => this.nextRound());
+          .then(({ scoreDelta }) => {
+            this._score += scoreDelta;
+
+            if (scoreDelta === 0 ||
+                this.isEmpty()) {
+              return wait(timeoutNewRound)
+                .then(() => this.nextRound());
+            }
+            return null;
+          });
       } else {
         console.log('Can not move from', from, ' to', to);
       }
     }
     return Promise.resolve();
+  }
+
+  isEmpty() {
+    const chart = this._chart;
+    const nx = chart.length;
+    for (let i = 0; i < nx; ++i)
+      for (let j = 0; j < nx; ++j)
+        if (chart[i][j] !== null) return false;
+    return true;
   }
 
   // Rules: finds max continious sequence of same color as pos in
@@ -188,11 +211,11 @@ class Board {
 
     // horizontal path
     let hPath = [];
-    for (let i = left; i <= right; ++i) hPath.push({ x: i, y: pos.y });
+    for (let i = left.x; i <= right.x; ++i) hPath.push({ x: i, y: pos.y });
 
     // vertical path
     let vPath = [];
-    for (let i = top; i <= bottom; ++i) vPath.push({ x: pos.x, y: i });
+    for (let i = top.y; i <= bottom.y; ++i) vPath.push({ x: pos.x, y: i });
 
     // diagnal path: top left to bottom right path
     let tl2brPath = [];
@@ -217,8 +240,8 @@ class Board {
     // Create disappearing pieces
     // When animation finished: remove disappearing pieces
 
-    // console.log('longest path for ', color, longestPath);
     const color = chart[pos.x][pos.y].color;
+    console.log('longest path for ', color, longestPath);
     if (longestPath.length >= this._minLength) {
       longestPath.forEach(({ x, y }) => chart[x][y] = null);
       this._disappearingPieces = {
@@ -227,10 +250,32 @@ class Board {
         path: longestPath
       };
       return wait(this._disappearingDuration)
-        .then(() => this._disappearingPieces = null);
+        .then(() => this._disappearingPieces = null)
+        .then(() => (
+          { scoreDelta: this.computeScoreDelta({ path: longestPath, color }) }
+        ));
     }
 
-    return Promise.resolve();
+    return Promise.resolve({ scoreDelta: 0 });
+  }
+
+  computeScoreDelta({ path, color }) {
+    // 'red' => 1
+    // 'green' => 2
+    // 'blue' => 3
+    // 'orange' => 4
+    // 'purple' => 5
+    // The score is a quadratic function of path length
+    const len = path.length;
+    return len * len * (this._colors.indexOf(color) + 1) * 1;
+  }
+
+  getScore() {
+    return this._score;
+  }
+
+  isOver() {
+    return this._over;
   }
 
   getShortestPath(from, to) {
@@ -466,17 +511,15 @@ function wait(ms) {
 }
 
 function init() {
-  const { numUnits, numNewPiecesPerMove } = game;
+  const { numUnits, numNewPiecesPerMove, minLength } = game;
 
-  const canvas = document.querySelector('#canvas');
-  const ctx = canvas.getContext('2d');
-
-  const board = new Board({ numUnits, numNewPiecesPerMove });
+  const ctx = document.querySelector('#canvas').getContext('2d');
+  const board = new Board({ numUnits, numNewPiecesPerMove, minLength });
   board.nextRound();
 
-  canvas.addEventListener('click', handleClick);
+  document.querySelector('#canvas').addEventListener('click', handleClick);
+  document.querySelector('#restart').addEventListener('click', init);
 
-  game.canvas = canvas;
   game.ctx = ctx;
   game.board = board;
 }
@@ -489,16 +532,25 @@ function step() {
 function render() {
   const { board, ctx } = game;
   const { width, height } = ctx.canvas;
-  ctx.clearRect(0, 0, width, height);
+
+  // Clear canvas
   ctx.fillStyle = 'grey';
   ctx.fillRect(0, 0, width, height);
+
+  // Update board
   board.draw(ctx);
+
+  // Update score board
+  document.querySelector('#scoreboard').innerText = 'Score: ' + board.getScore();
+
+  // Update game status
+  document.querySelector('#message').innerText = board.isOver() ? 'Game over.' : '';
 }
 
 function handleClick(e) {
-  const { canvas, numUnits, board } = game;
+  const { ctx, numUnits, board } = game;
   let { offsetX: x, offsetY: y } = e;
-  const { width } = canvas;
+  const { width } = ctx.canvas;
   const spacing = width / numUnits;
   x = Math.round(x / spacing - 0.5);
   y = Math.round(y / spacing - 0.5);

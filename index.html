@@ -1,8 +1,54 @@
 <html>
+  <style>
+    #topBar {
+      margin-bottom: 0.5em;
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: 2em;
+      color: #5c5cff;
+    }
+
+    #topBar > * {
+      vertical-align: center;
+    }
+
+    #scoreboard {
+      margin-right: 2em;
+    }
+
+    button {
+      padding: 0.2em 0.4em;
+      background: none;
+      font-size: 2em;
+      border: solid 1px #5c5cff;
+      color: #5c5cff;
+      border-radius: 4px;
+      cursor: pointer;
+      outline: none;
+    }
+
+    button:hover {
+      background: #5c5cff;
+      color: #ffffff;
+    }
+
+    #restart {
+      margin-top: 0.5em;
+    }
+  </Style>
+
   <body>
     <div id="container">
+      <div id="topBar">
+        <span id="scoreboard">Score: 0</span>
+        <span id="message"></span>
+      </div>
       <canvas id="canvas" width="800" height="800"></canvas>
+      <div id="bottomBar">
+        <button id="restart">Restart</button>
+      </div>
     </div>
+
     <script src="game.js"></script>
   </body>
+
 </html>
